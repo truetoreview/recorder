@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro WAV Recorder - Stable Version</title>
+    <title>Pro WAV Recorder - One Shot</title>
     <style>
-        :root { --primary: #6366f1; --danger: #ef4444; --bg: #0f172a; --card: #1e293b; }
+        :root { --primary: #6366f1; --danger: #ef4444; --bg: #0f172a; --card: #1e293b; --disabled: #475569; }
         body { 
             font-family: 'Segoe UI', system-ui, sans-serif; 
             background: var(--bg); 
@@ -20,63 +20,69 @@
         
         .card { 
             background: var(--card); 
-            padding: 2rem; 
+            padding: 2.5rem; 
             border-radius: 24px; 
             box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); 
             text-align: center; 
             width: 100%; 
-            max-width: 400px; 
-            margin-bottom: 20px;
+            max-width: 420px; 
         }
         
-        #visualizer { width: 100%; height: 100px; background: #334155; border-radius: 12px; margin-bottom: 1.5rem; }
+        /* Standard Waveform Style */
+        #visualizer { 
+            width: 100%; 
+            height: 120px; 
+            background: #111827; 
+            border-radius: 16px; 
+            margin-bottom: 1.5rem;
+            border: 1px solid #334155;
+        }
         
         .status-dot { height: 10px; width: 10px; background: #94a3b8; border-radius: 50%; display: inline-block; margin-right: 8px; }
         .recording .status-dot { background: var(--danger); animation: pulse 1.5s infinite; }
         
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
 
-        button { width: 100%; padding: 16px; border-radius: 12px; border: none; font-weight: bold; font-size: 1rem; cursor: pointer; transition: all 0.2s; margin-top: 10px; }
+        button { width: 100%; padding: 18px; border-radius: 14px; border: none; font-weight: bold; font-size: 1.1rem; cursor: pointer; transition: all 0.2s; margin-top: 10px; }
         
         #startBtn { background: var(--primary); color: white; }
-        #stopBtn { background: #f8fafc; color: var(--bg); display: none; }
+        #stopBtn { background: var(--danger); color: white; display: none; }
         
-        .timer { font-size: 2.5rem; font-family: monospace; margin: 1rem 0; color: #cbd5e1; }
+        button:disabled { background: var(--disabled) !important; cursor: not-allowed; opacity: 0.6; }
 
-        .history-container { width: 100%; max-width: 400px; }
-        .history-item { 
-            background: #334155; 
-            margin-top: 10px; 
-            padding: 12px; 
-            border-radius: 12px; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            animation: slideIn 0.3s ease-out;
+        .timer { font-size: 3rem; font-family: 'Courier New', monospace; margin: 1rem 0; color: #f8fafc; font-weight: bold; }
+
+        .msg-reload {
+            margin-top: 20px;
+            color: #94a3b8;
+            font-size: 0.9rem;
+            display: none;
+            padding: 10px;
+            border: 1px dashed #475569;
+            border-radius: 8px;
         }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .download-link { color: #818cf8; text-decoration: none; font-weight: bold; font-size: 0.9rem; }
     </style>
 </head>
 <body>
 
 <div class="card" id="mainCard">
-    <div id="statusText"><span class="status-dot"></span>Ready</div>
+    <div id="statusText"><span class="status-dot"></span><span id="stateLbl">Ready</span></div>
     <div class="timer" id="timer">00:00</div>
     <canvas id="visualizer"></canvas>
     
-    <button id="startBtn">Start Recording (Real WAV)</button>
-    <button id="stopBtn">Stop & Save</button>
-</div>
+    <button id="startBtn">Start Recording</button>
+    <button id="stopBtn">Stop & Download</button>
 
-<div class="history-container" id="historyList">
-    <p style="text-align: center; color: #94a3b8; font-size: 0.8rem;">Recent Recordings (Safe Net)</p>
+    <div id="reloadMsg" class="msg-reload">
+        Session Finished. <br> <b>Please reload the page to record again.</b>
+    </div>
 </div>
 
 <script>
     let audioCtx, processor, input, analyser, audioStream;
     let wavChunks = [];
     let timerInterval, seconds = 0;
+    let isLocked = false;
 
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -84,21 +90,21 @@
     const card = document.getElementById('mainCard');
     const canvas = document.getElementById('visualizer');
     const canvasCtx = canvas.getContext("2d");
-    const historyList = document.getElementById('historyList');
+    const stateLbl = document.getElementById('stateLbl');
+    const reloadMsg = document.getElementById('reloadMsg');
 
-    // WAV Encoder Logic
+    // WAV Encoder
     function encodeWAV(samples, sampleRate) {
         let buffer = new ArrayBuffer(44 + samples.length * 2);
         let view = new DataView(buffer);
         const writeString = (off, s) => { for (let i=0; i<s.length; i++) view.setUint8(off+i, s.charCodeAt(i)) };
-        
         writeString(0, 'RIFF');
         view.setUint32(4, 32 + samples.length * 2, true);
         writeString(8, 'WAVE');
         writeString(12, 'fmt ');
         view.setUint32(16, 16, true);
         view.setUint16(20, 1, true);
-        view.setUint16(22, 1, true); // Mono
+        view.setUint16(22, 1, true);
         view.setUint32(24, sampleRate, true);
         view.setUint32(28, sampleRate * 2, true);
         view.setUint16(32, 2, true);
@@ -114,6 +120,7 @@
     }
 
     startBtn.onclick = async () => {
+        if(isLocked) return;
         try {
             wavChunks = [];
             seconds = 0;
@@ -123,6 +130,7 @@
             audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
             
             analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 2048; // Smoothness for waveform
             input = audioCtx.createMediaStreamSource(audioStream);
             processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
@@ -138,19 +146,26 @@
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
             card.classList.add('recording');
+            stateLbl.innerText = "Recording...";
             startTimer();
         } catch (err) {
-            alert("Mic error: Check HTTPS or permissions.");
+            alert("Error: Mic access denied or not found.");
         }
     };
 
     stopBtn.onclick = () => {
-        // Stop hardware immediately
+        // 1. Lock UI
+        isLocked = true;
+        stopBtn.disabled = true;
+        startBtn.disabled = true;
+
+        // 2. Stop Hardware
         audioStream.getTracks().forEach(t => t.stop());
         processor.disconnect();
         input.disconnect();
+        clearInterval(timerInterval);
         
-        // Process Data
+        // 3. Process Audio
         let totalLength = wavChunks.reduce((acc, curr) => acc + curr.length, 0);
         let result = new Float32Array(totalLength);
         let offset = 0;
@@ -159,24 +174,27 @@
         const finalBlob = encodeWAV(result, 44100);
         const url = URL.createObjectURL(finalBlob);
         
-        // Create Recovery Item
-        const timeLabel = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        const item = document.createElement('div');
-        item.className = 'history-item';
-        item.innerHTML = `<span>Rec ${timeLabel}</span><a href="${url}" download="Rec_${timeLabel}.wav" class="download-link">Download</a>`;
-        historyList.prepend(item);
-
-        // Trigger Auto Download
+        // 4. Generate timestamp with seconds
+        const now = new Date();
+        const timeStr = now.getHours().toString().padStart(2, '0') + "-" + 
+                        now.getMinutes().toString().padStart(2, '0') + "-" + 
+                        now.getSeconds().toString().padStart(2, '0');
+        
+        // 5. Automatic Download
         const a = document.createElement('a');
         a.href = url;
-        a.download = `Recording_${Date.now()}.wav`;
+        a.download = `Recording_${timeStr}.wav`;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
 
-        // UI Reset
-        clearInterval(timerInterval);
-        startBtn.style.display = 'block';
-        stopBtn.style.display = 'none';
+        // 6. Update UI to Final State
         card.classList.remove('recording');
+        stateLbl.innerText = "Done";
+        stopBtn.style.display = 'none';
+        startBtn.style.display = 'block';
+        startBtn.innerText = "Locked";
+        reloadMsg.style.display = 'block';
     };
 
     function startTimer() {
@@ -188,29 +206,56 @@
         }, 1000);
     }
 
+    // Standard Waveform Visualizer Logic
     function visualize() {
-        analyser.fftSize = 64;
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
 
         function draw() {
-            if (!card.classList.contains('recording')) return;
-            requestAnimationFrame(draw);
-            analyser.getByteFrequencyData(dataArray);
-            canvasCtx.fillStyle = '#1e293b';
-            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            let x = 0;
-            const barWidth = (canvas.width / bufferLength) * 2;
-            for(let i = 0; i < bufferLength; i++) {
-                let barHeight = dataArray[i] / 1.5;
-                canvasCtx.fillStyle = '#6366f1';
-                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
-                x += barWidth;
+            if (!card.classList.contains('recording')) {
+                // Clear to flat line if not recording
+                canvasCtx.fillStyle = '#111827';
+                canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+                canvasCtx.strokeStyle = '#334155';
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(0, canvas.height / 2);
+                canvasCtx.lineTo(canvas.width, canvas.height / 2);
+                canvasCtx.stroke();
+                return;
             }
+
+            requestAnimationFrame(draw);
+            analyser.getByteTimeDomainData(dataArray);
+
+            canvasCtx.fillStyle = '#111827';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            canvasCtx.lineWidth = 3;
+            canvasCtx.strokeStyle = '#6366f1';
+            canvasCtx.beginPath();
+
+            let sliceWidth = canvas.width * 1.0 / bufferLength;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                let v = dataArray[i] / 128.0;
+                let y = v * canvas.height / 2;
+
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+                x += sliceWidth;
+            }
+
+            canvasCtx.lineTo(canvas.width, canvas.height / 2);
+            canvasCtx.stroke();
         }
         draw();
     }
+
+    // Initial state line
+    visualize(); 
 </script>
 </body>
 </html>
