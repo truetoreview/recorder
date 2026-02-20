@@ -5,29 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pro Private Recorder</title>
     <style>
-        :root { --primary: #6366f1; --danger: #ef4444; --bg: #0f172a; --card: #1e293b; }
-        body { 
-            font-family: 'Segoe UI', system-ui, sans-serif; 
-            background: var(--bg); 
-            color: white; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            padding: 20px;
-            margin: 0; 
-            min-height: 100vh;
-        }
+        :root { --primary: #6366f1; --danger: #ef4444; --bg: #0f172a; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
         
-        .card { 
-            background: var(--card); 
-            padding: 2rem; 
-            border-radius: 24px; 
-            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); 
-            text-align: center; 
-            width: 100%; 
-            max-width: 400px; 
-            margin-top: 40px;
-        }
+        .card { background: #1e293b; padding: 2rem; border-radius: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); text-align: center; width: 90%; max-width: 400px; }
         
         #visualizer { width: 100%; height: 100px; background: #334155; border-radius: 12px; margin-bottom: 1.5rem; }
         
@@ -39,40 +20,20 @@
         button { width: 100%; padding: 16px; border-radius: 12px; border: none; font-weight: bold; font-size: 1rem; cursor: pointer; transition: all 0.2s; margin-top: 10px; }
         
         #startBtn { background: var(--primary); color: white; }
-        #stopBtn { background: #fff; color: #000; display: none; }
+        #stopBtn { background: white; color: var(--bg); display: none; }
         
-        .timer { font-size: 3rem; font-family: monospace; margin: 0.5rem 0; color: #cbd5e1; }
-
-        /* History Section */
-        .history { width: 100%; max-width: 400px; margin-top: 30px; }
-        .history h3 { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
-        .recording-item { 
-            background: #2d3748; 
-            padding: 12px; 
-            border-radius: 12px; 
-            margin-bottom: 8px; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            font-size: 0.85rem;
-        }
-        .download-link { color: var(--primary); text-decoration: none; font-weight: bold; }
+        .timer { font-size: 2rem; font-family: monospace; margin: 1rem 0; color: #cbd5e1; }
     </style>
 </head>
 <body>
 
 <div class="card" id="mainCard">
-    <div id="statusText"><span class="status-dot"></span>Ready to Record</div>
+    <div id="statusText"><span class="status-dot"></span>Ready</div>
     <div class="timer" id="timer">00:00</div>
     <canvas id="visualizer"></canvas>
     
-    <button id="startBtn">Start Recording</button>
-    <button id="stopBtn">Stop & Auto-Save</button>
-</div>
-
-<div class="history" id="historySection" style="display:none;">
-    <h3>Recent Session Recordings</h3>
-    <div id="recordingList"></div>
+    <button id="startBtn">Start High-Quality Recording</button>
+    <button id="stopBtn">Finish & Save WAV</button>
 </div>
 
 <script>
@@ -80,7 +41,6 @@
     let mediaRecorder;
     let timerInterval;
     let seconds = 0;
-    let audioCtx;
 
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -88,80 +48,59 @@
     const card = document.getElementById('mainCard');
     const canvas = document.getElementById('visualizer');
     const canvasCtx = canvas.getContext("2d");
-    const recordingList = document.getElementById('recordingList');
-    const historySection = document.getElementById('historySection');
 
     startBtn.onclick = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: {
                 echoCancellation: false,
                 noiseSuppression: false,
-                autoGainControl: false
+                autoGainControl: false, // Keeps quality "Raw"
+                sampleRate: 44100
             }});
 
-            // Visualizer setup
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            // Set up Visualizer
+            const audioCtx = new AudioContext();
             const source = audioCtx.createMediaStreamSource(stream);
             const analyser = audioCtx.createAnalyser();
             source.connect(analyser);
             visualize(analyser);
 
-            // Recorder setup
+            // Start Recording
             mediaRecorder = new MediaRecorder(stream);
-            chunks = []; // Clear previous
             mediaRecorder.ondataavailable = e => chunks.push(e.data);
-            mediaRecorder.onstop = saveFile;
+            mediaRecorder.onstop = () => saveFile();
             
             mediaRecorder.start();
             
-            // UI Update
+            // UI Updates
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
             card.classList.add('recording');
-            document.getElementById('statusText').innerHTML = '<span class="status-dot"></span>Recording...';
             startTimer();
         } catch (err) {
-            alert("Mic Access Denied. Make sure you are using HTTPS (GitHub Pages)!");
+            alert("Error: Microphone access denied. Please try using a local server or HTTPS.");
         }
     };
 
     stopBtn.onclick = () => {
         mediaRecorder.stop();
         stopTimer();
-        startBtn.style.display = 'block';
-        stopBtn.style.display = 'none';
-        card.classList.remove('recording');
-        document.getElementById('statusText').innerHTML = '<span class="status-dot"></span>Saved to Downloads';
     };
 
     function saveFile() {
-        const timestamp = new Date().toLocaleTimeString().replace(/ /g, '');
+        const fileName = prompt("Name your high-quality recording:", "Voice_Recording") || "recording";
         const blob = new Blob(chunks, { type: 'audio/wav' });
         const url = URL.createObjectURL(blob);
-        
-        // Auto-download logic
         const a = document.createElement('a');
         a.href = url;
-        const fileName = `Rec_${timestamp}.wav`;
-        a.download = fileName;
-        document.body.appendChild(a);
+        a.download = `${fileName}.wav`;
         a.click();
-        document.body.removeChild(a);
-
-        // Add to history list on screen
-        historySection.style.display = 'block';
-        const item = document.createElement('div');
-        item.className = 'recording-item';
-        item.innerHTML = `
-            <span>${fileName}</span>
-            <a href="${url}" download="${fileName}" class="download-link">Download Again</a>
-        `;
-        recordingList.prepend(item);
+        
+        // Reset UI
+        location.reload(); 
     }
 
     function startTimer() {
-        seconds = 0;
-        timerDisplay.innerText = "00:00";
         timerInterval = setInterval(() => {
             seconds++;
             let mins = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -178,7 +117,6 @@
         const dataArray = new Uint8Array(bufferLength);
 
         function draw() {
-            if (!card.classList.contains('recording')) return;
             requestAnimationFrame(draw);
             analyser.getByteFrequencyData(dataArray);
             canvasCtx.fillStyle = '#1e293b';
@@ -186,6 +124,7 @@
             
             const barWidth = (canvas.width / bufferLength) * 2.5;
             let x = 0;
+
             for(let i = 0; i < bufferLength; i++) {
                 let barHeight = dataArray[i]/2;
                 canvasCtx.fillStyle = `rgb(99, 102, 241)`;
