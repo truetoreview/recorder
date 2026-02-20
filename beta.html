@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Recorder - Mobile Optimized</title>
+    <title>Pro Recorder - Real-time Scroll</title>
     <style>
         :root { --primary: #6366f1; --danger: #ef4444; --bg: #0f172a; --card: #1e293b; }
         body { 
@@ -12,36 +12,39 @@
             padding: 15px; margin: 0; min-height: 100vh;
         }
         .card { 
-            background: var(--card); padding: 1.5rem; border-radius: 20px; 
-            text-align: center; width: 100%; max-width: 400px; box-sizing: border-box;
+            background: var(--card); padding: 1.5rem; border-radius: 24px; 
+            text-align: center; width: 100%; max-width: 420px; box-sizing: border-box;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
         #visualizer { 
-            width: 100%; height: 120px; background: #000; 
-            border-radius: 12px; margin: 15px 0; border: 1px solid #334155;
-            /* Force hardware acceleration for mobile */
-            transform: translateZ(0); 
+            width: 100%; height: 140px; background: #070b14; 
+            border-radius: 16px; margin: 15px 0; border: 1px solid #334155;
+            display: block;
         }
-        .timer { font-size: 2.5rem; font-weight: bold; margin: 10px 0; font-family: monospace; }
+        .timer { font-size: 3rem; font-weight: bold; margin: 5px 0; font-family: 'Courier New', monospace; color: #e2e8f0; }
         button { 
-            width: 100%; padding: 16px; border-radius: 12px; border: none; 
-            font-weight: bold; font-size: 1rem; cursor: pointer; margin-top: 10px;
+            width: 100%; padding: 18px; border-radius: 14px; border: none; 
+            font-weight: bold; font-size: 1.1rem; cursor: pointer; margin-top: 10px;
+            transition: transform 0.1s;
         }
+        button:active { transform: scale(0.98); }
         #startBtn { background: var(--primary); color: white; }
         #stopBtn { background: var(--danger); color: white; display: none; }
-        button:disabled { background: #475569; opacity: 0.6; }
-        .msg { margin-top: 15px; color: #94a3b8; font-size: 0.85rem; display: none; }
+        button:disabled { background: #475569; opacity: 0.6; cursor: not-allowed; }
+        .msg { margin-top: 15px; color: #94a3b8; font-size: 0.9rem; display: none; line-height: 1.4; }
+        #status { font-weight: bold; letter-spacing: 1px; color: #94a3b8; }
     </style>
 </head>
 <body>
 
 <div class="card" id="mainCard">
-    <div id="status">● Ready</div>
+    <div id="status">READY</div>
     <div class="timer" id="timer">00:00</div>
     <canvas id="visualizer"></canvas>
     
     <button id="startBtn">Start Recording</button>
     <button id="stopBtn">Stop & Download</button>
-    <div id="reloadMsg" class="msg"><b>Recording Locked.</b><br>Reload page to record again.</div>
+    <div id="reloadMsg" class="msg"><b>Session Locked.</b><br>Reload the page to start a new recording.</div>
 </div>
 
 <script>
@@ -55,11 +58,13 @@
     const stopBtn = document.getElementById('stopBtn');
     const timerDisplay = document.getElementById('timer');
     const canvas = document.getElementById('visualizer');
-    const canvasCtx = canvas.getContext("2d", { alpha: false }); // Optimization for mobile
+    const canvasCtx = canvas.getContext("2d", { alpha: false });
 
-    // Set canvas resolution explicitly
-    canvas.width = canvas.offsetWidth;
-    canvas.height = canvas.offsetHeight;
+    // Handle high-DPI displays for sharpness
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.offsetWidth * dpr;
+    canvas.height = canvas.offsetHeight * dpr;
+    canvasCtx.scale(dpr, dpr);
 
     function encodeWAV(samples, sampleRate) {
         let buffer = new ArrayBuffer(44 + samples.length * 2);
@@ -104,26 +109,32 @@
                 const data = e.inputBuffer.getChannelData(0);
                 wavChunks.push(new Float32Array(data));
                 
-                // Volume peak for visualizer
                 let peak = 0;
                 for(let i=0; i<data.length; i++) {
                     let abs = Math.abs(data[i]);
                     if(abs > peak) peak = abs;
                 }
+                
+                // Add new volume data
                 volumeHistory.push(peak);
-                if(volumeHistory.length > 60) volumeHistory.shift();
+                
+                // Keep enough bars to fill the screen, plus some extra
+                const maxBars = Math.floor(canvas.offsetWidth / 6); 
+                if(volumeHistory.length > maxBars) {
+                    volumeHistory.shift();
+                }
             };
 
             isRecording = true;
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
-            document.getElementById('status').innerText = "🔴 Recording...";
+            document.getElementById('status').innerText = "RECORDING";
+            document.getElementById('status').style.color = "#ef4444";
             
-            // Start UI Loops
             startTimer();
             draw();
         } catch (err) {
-            alert("Please allow microphone access.");
+            alert("Mic access is required for this app to work.");
         }
     };
 
@@ -143,7 +154,6 @@
         const blob = encodeWAV(result, audioCtx.sampleRate);
         const url = URL.createObjectURL(blob);
         
-        // Date-Time Filename: DD-MM-YYYY-H-M-S
         const n = new Date();
         const timestamp = `${n.getDate()}-${n.getMonth()+1}-${n.getFullYear()}-${n.getHours()}-${n.getMinutes()}-${n.getSeconds()}`;
         
@@ -152,7 +162,8 @@
         a.download = `${timestamp}.wav`;
         a.click();
 
-        document.getElementById('status').innerText = "✓ Saved";
+        document.getElementById('status').innerText = "SAVED";
+        document.getElementById('status').style.color = "#10b981";
         document.getElementById('reloadMsg').style.display = 'block';
     };
 
@@ -169,30 +180,43 @@
         if (!isRecording) return;
         requestAnimationFrame(draw);
 
-        // Fill background
-        canvasCtx.fillStyle = "#111827";
-        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+        const width = canvas.offsetWidth;
+        const height = canvas.offsetHeight;
+        const midY = height / 2;
+        
+        // Fixed Cursor Position (75% of the way to the right)
+        const cursorX = width * 0.75;
+        const barWidth = 3;
+        const gap = 2;
+        const step = barWidth + gap;
 
-        const barWidth = 5;
-        const gap = 3;
-        const midY = canvas.height / 2;
+        canvasCtx.fillStyle = "#070b14";
+        canvasCtx.fillRect(0, 0, width, height);
 
-        // Draw bars
-        volumeHistory.forEach((vol, i) => {
-            const h = Math.max(4, vol * canvas.height * 1.5);
-            const x = i * (barWidth + gap);
+        // Draw the bars relative to the cursor
+        // The most recent bar (last in array) is drawn at cursorX
+        for (let i = 0; i < volumeHistory.length; i++) {
+            const barData = volumeHistory[volumeHistory.length - 1 - i];
+            const h = Math.max(4, barData * height * 1.5);
+            const x = cursorX - (i * step);
+
+            if (x < -barWidth) break; // Don't draw bars off the left edge
+
             canvasCtx.fillStyle = "#6366f1";
-            canvasCtx.fillRect(x, midY - h/2, barWidth, h);
-        });
+            // Rounded bar effect
+            canvasCtx.beginPath();
+            canvasCtx.roundRect(x, midY - h/2, barWidth, h, 2);
+            canvasCtx.fill();
+        }
 
-        // Timeline cursor
+        // Draw the Red Cursor Line
         canvasCtx.fillStyle = "#ef4444";
-        canvasCtx.fillRect(volumeHistory.length * (barWidth + gap), 0, 2, canvas.height);
+        canvasCtx.fillRect(cursorX, 0, 2, height);
     }
 
-    // Initial draw to clear canvas
-    canvasCtx.fillStyle = "#111827";
-    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+    // Initial state
+    canvasCtx.fillStyle = "#070b14";
+    canvasCtx.fillRect(0, 0, canvas.offsetWidth, canvas.offsetHeight);
 </script>
 </body>
 </html>
