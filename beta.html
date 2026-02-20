@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Recorder - Mobile Optimized</title>
+    <style>
+        :root { --primary: #6366f1; --danger: #ef4444; --bg: #0f172a; --card: #1e293b; }
+        body { 
+            font-family: sans-serif; background: var(--bg); color: white; 
+            display: flex; flex-direction: column; align-items: center; 
+            padding: 15px; margin: 0; min-height: 100vh;
+        }
+        .card { 
+            background: var(--card); padding: 1.5rem; border-radius: 20px; 
+            text-align: center; width: 100%; max-width: 400px; box-sizing: border-box;
+        }
+        #visualizer { 
+            width: 100%; height: 120px; background: #000; 
+            border-radius: 12px; margin: 15px 0; border: 1px solid #334155;
+            /* Force hardware acceleration for mobile */
+            transform: translateZ(0); 
+        }
+        .timer { font-size: 2.5rem; font-weight: bold; margin: 10px 0; font-family: monospace; }
+        button { 
+            width: 100%; padding: 16px; border-radius: 12px; border: none; 
+            font-weight: bold; font-size: 1rem; cursor: pointer; margin-top: 10px;
+        }
+        #startBtn { background: var(--primary); color: white; }
+        #stopBtn { background: var(--danger); color: white; display: none; }
+        button:disabled { background: #475569; opacity: 0.6; }
+        .msg { margin-top: 15px; color: #94a3b8; font-size: 0.85rem; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="card" id="mainCard">
+    <div id="status">● Ready</div>
+    <div class="timer" id="timer">00:00</div>
+    <canvas id="visualizer"></canvas>
+    
+    <button id="startBtn">Start Recording</button>
+    <button id="stopBtn">Stop & Download</button>
+    <div id="reloadMsg" class="msg"><b>Recording Locked.</b><br>Reload page to record again.</div>
+</div>
+
+<script>
+    let audioCtx, processor, analyser, audioStream;
+    let wavChunks = [];
+    let timerInterval, seconds = 0;
+    let volumeHistory = [];
+    let isRecording = false;
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const timerDisplay = document.getElementById('timer');
+    const canvas = document.getElementById('visualizer');
+    const canvasCtx = canvas.getContext("2d", { alpha: false }); // Optimization for mobile
+
+    // Set canvas resolution explicitly
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+
+    function encodeWAV(samples, sampleRate) {
+        let buffer = new ArrayBuffer(44 + samples.length * 2);
+        let view = new DataView(buffer);
+        const writeString = (off, s) => { for (let i=0; i<s.length; i++) view.setUint8(off+i, s.charCodeAt(i)) };
+        writeString(0, 'RIFF');
+        view.setUint32(4, 32 + samples.length * 2, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeString(36, 'data');
+        view.setUint32(40, samples.length * 2, true);
+        for (let i = 0; i < samples.length; i++) {
+            let s = Math.max(-1, Math.min(1, samples[i]));
+            view.setInt16(44 + (i * 2), s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
+        return new Blob([view], { type: 'audio/wav' });
+    }
+
+    startBtn.onclick = async () => {
+        try {
+            audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            const input = audioCtx.createMediaStreamSource(audioStream);
+            processor = audioCtx.createScriptProcessor(2048, 1, 1);
+
+            input.connect(analyser);
+            input.connect(processor);
+            processor.connect(audioCtx.destination);
+
+            processor.onaudioprocess = (e) => {
+                if (!isRecording) return;
+                const data = e.inputBuffer.getChannelData(0);
+                wavChunks.push(new Float32Array(data));
+                
+                // Volume peak for visualizer
+                let peak = 0;
+                for(let i=0; i<data.length; i++) {
+                    let abs = Math.abs(data[i]);
+                    if(abs > peak) peak = abs;
+                }
+                volumeHistory.push(peak);
+                if(volumeHistory.length > 60) volumeHistory.shift();
+            };
+
+            isRecording = true;
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'block';
+            document.getElementById('status').innerText = "🔴 Recording...";
+            
+            // Start UI Loops
+            startTimer();
+            draw();
+        } catch (err) {
+            alert("Please allow microphone access.");
+        }
+    };
+
+    stopBtn.onclick = () => {
+        isRecording = false;
+        startBtn.disabled = true;
+        stopBtn.disabled = true;
+        
+        audioStream.getTracks().forEach(t => t.stop());
+        clearInterval(timerInterval);
+
+        let totalLength = wavChunks.reduce((acc, curr) => acc + curr.length, 0);
+        let result = new Float32Array(totalLength);
+        let offset = 0;
+        for (let chunk of wavChunks) { result.set(chunk, offset); offset += chunk.length; }
+
+        const blob = encodeWAV(result, audioCtx.sampleRate);
+        const url = URL.createObjectURL(blob);
+        
+        // Date-Time Filename: DD-MM-YYYY-H-M-S
+        const n = new Date();
+        const timestamp = `${n.getDate()}-${n.getMonth()+1}-${n.getFullYear()}-${n.getHours()}-${n.getMinutes()}-${n.getSeconds()}`;
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${timestamp}.wav`;
+        a.click();
+
+        document.getElementById('status').innerText = "✓ Saved";
+        document.getElementById('reloadMsg').style.display = 'block';
+    };
+
+    function startTimer() {
+        timerInterval = setInterval(() => {
+            seconds++;
+            let m = Math.floor(seconds / 60).toString().padStart(2, '0');
+            let s = (seconds % 60).toString().padStart(2, '0');
+            timerDisplay.innerText = `${m}:${s}`;
+        }, 1000);
+    }
+
+    function draw() {
+        if (!isRecording) return;
+        requestAnimationFrame(draw);
+
+        // Fill background
+        canvasCtx.fillStyle = "#111827";
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = 5;
+        const gap = 3;
+        const midY = canvas.height / 2;
+
+        // Draw bars
+        volumeHistory.forEach((vol, i) => {
+            const h = Math.max(4, vol * canvas.height * 1.5);
+            const x = i * (barWidth + gap);
+            canvasCtx.fillStyle = "#6366f1";
+            canvasCtx.fillRect(x, midY - h/2, barWidth, h);
+        });
+
+        // Timeline cursor
+        canvasCtx.fillStyle = "#ef4444";
+        canvasCtx.fillRect(volumeHistory.length * (barWidth + gap), 0, 2, canvas.height);
+    }
+
+    // Initial draw to clear canvas
+    canvasCtx.fillStyle = "#111827";
+    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+</script>
+</body>
+</html>
