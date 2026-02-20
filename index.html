@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Private Recorder</title>
+    <style>
+        :root { --primary: #6366f1; --danger: #ef4444; --bg: #0f172a; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        
+        .card { background: #1e293b; padding: 2rem; border-radius: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); text-align: center; width: 90%; max-width: 400px; }
+        
+        #visualizer { width: 100%; height: 100px; background: #334155; border-radius: 12px; margin-bottom: 1.5rem; }
+        
+        .status-dot { height: 10px; width: 10px; background: #94a3b8; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .recording .status-dot { background: var(--danger); animation: pulse 1.5s infinite; }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+
+        button { width: 100%; padding: 16px; border-radius: 12px; border: none; font-weight: bold; font-size: 1rem; cursor: pointer; transition: all 0.2s; margin-top: 10px; }
+        
+        #startBtn { background: var(--primary); color: white; }
+        #stopBtn { background: white; color: var(--bg); display: none; }
+        
+        .timer { font-size: 2rem; font-family: monospace; margin: 1rem 0; color: #cbd5e1; }
+    </style>
+</head>
+<body>
+
+<div class="card" id="mainCard">
+    <div id="statusText"><span class="status-dot"></span>Ready</div>
+    <div class="timer" id="timer">00:00</div>
+    <canvas id="visualizer"></canvas>
+    
+    <button id="startBtn">Start High-Quality Recording</button>
+    <button id="stopBtn">Finish & Save WAV</button>
+</div>
+
+<script>
+    let chunks = [];
+    let mediaRecorder;
+    let timerInterval;
+    let seconds = 0;
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const timerDisplay = document.getElementById('timer');
+    const card = document.getElementById('mainCard');
+    const canvas = document.getElementById('visualizer');
+    const canvasCtx = canvas.getContext("2d");
+
+    startBtn.onclick = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false, // Keeps quality "Raw"
+                sampleRate: 44100
+            }});
+
+            // Set up Visualizer
+            const audioCtx = new AudioContext();
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyser = audioCtx.createAnalyser();
+            source.connect(analyser);
+            visualize(analyser);
+
+            // Start Recording
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = e => chunks.push(e.data);
+            mediaRecorder.onstop = () => saveFile();
+            
+            mediaRecorder.start();
+            
+            // UI Updates
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'block';
+            card.classList.add('recording');
+            startTimer();
+        } catch (err) {
+            alert("Error: Microphone access denied. Please try using a local server or HTTPS.");
+        }
+    };
+
+    stopBtn.onclick = () => {
+        mediaRecorder.stop();
+        stopTimer();
+    };
+
+    function saveFile() {
+        const fileName = prompt("Name your high-quality recording:", "Voice_Recording") || "recording";
+        const blob = new Blob(chunks, { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${fileName}.wav`;
+        a.click();
+        
+        // Reset UI
+        location.reload(); 
+    }
+
+    function startTimer() {
+        timerInterval = setInterval(() => {
+            seconds++;
+            let mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+            let secs = (seconds % 60).toString().padStart(2, '0');
+            timerDisplay.innerText = `${mins}:${secs}`;
+        }, 1000);
+    }
+
+    function stopTimer() { clearInterval(timerInterval); }
+
+    function visualize(analyser) {
+        analyser.fftSize = 256;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        function draw() {
+            requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArray);
+            canvasCtx.fillStyle = '#1e293b';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const barWidth = (canvas.width / bufferLength) * 2.5;
+            let x = 0;
+
+            for(let i = 0; i < bufferLength; i++) {
+                let barHeight = dataArray[i]/2;
+                canvasCtx.fillStyle = `rgb(99, 102, 241)`;
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+        draw();
+    }
+</script>
+
+</body>
+</html>
